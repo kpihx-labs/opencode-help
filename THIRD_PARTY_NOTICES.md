@@ -2,12 +2,27 @@
 
 ## opzero1/op-thread
 
-This project is independently maintained and was derived from the architecture
-and selected implementation patterns of
-[opzero1/op-thread](https://github.com/opzero1/op-thread), Copyright (c)
-opzero1 contributors, licensed under the MIT License.
+Derived from [opzero1/op-thread](https://github.com/opzero1/op-thread). Its
+upstream MIT license is reproduced verbatim below.
 
-The upstream MIT license permits this derivative work. Upstream attribution and
-the original license notice are preserved here. `opencode-help` changes the
-public tool names and extends the lifecycle with archival and resumption while
-retaining durable SQLite ownership and queue concepts.
+MIT License
+
+Copyright (c) 2026 Afif Alauddin
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

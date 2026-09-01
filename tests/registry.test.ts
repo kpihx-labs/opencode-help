@@ -24,6 +24,7 @@ describe("durable lifecycle registry", () => {
   test("enforces owner-scoped safe concurrency", () => {
     const db = makeRegistry(); db.add(peer()); db.add(peer({ sessionID: "peer-2" }))
     expect(db.reserve("parent-a", "peer-1", 1, Date.now() + 10_000)).toBe(true)
+    expect(db.admit("parent-a", 1, Date.now() + 10_000)).toBeUndefined()
     expect(db.reserve("parent-a", "peer-2", 1, Date.now() + 10_000)).toBe(false)
   })
   test("durably queues, atomically claims, and marks delivery", () => {

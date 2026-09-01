@@ -44,8 +44,12 @@ export class HelpRegistry {
       attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at INTEGER NOT NULL, claimed_at INTEGER,
       last_error TEXT, created_at INTEGER NOT NULL, sent_at INTEGER
     )`)
+    this.#db.run(`CREATE TABLE IF NOT EXISTS admission (
+      id TEXT PRIMARY KEY, owner_session_id TEXT NOT NULL, expires_at INTEGER NOT NULL
+    )`)
     this.#db.run("CREATE INDEX IF NOT EXISTS peer_owner ON peer(owner_session_id, archived, created_at)")
     this.#db.run("CREATE INDEX IF NOT EXISTS queue_ready ON queue(state, next_attempt_at, created_at)")
+    this.#db.run("CREATE INDEX IF NOT EXISTS admission_owner ON admission(owner_session_id, expires_at)")
   }
 
   add(peer: Omit<Peer, "archived" | "createdAt"> & { createdAt?: number }) {
@@ -88,6 +92,23 @@ export class HelpRegistry {
     return this.#db.query<{ session_id: string }, Bindings>("SELECT session_id FROM peer WHERE directory = $directory AND archived = 0 AND active_until > $now")
       .all({ $directory: directory, $now: now }).map((row) => row.session_id)
   }
+
+  admit(ownerSessionID: string, max: number, expiresAt: number) {
+    return this.#db.transaction(() => {
+      const now = Date.now()
+      this.#db.query("DELETE FROM admission WHERE expires_at <= $now").run({ $now: now })
+      const active = this.#db.query<{ count: number }, Bindings>("SELECT COUNT(*) AS count FROM peer WHERE owner_session_id = $owner AND archived = 0 AND active_until > $now")
+        .get({ $owner: ownerSessionID, $now: now })?.count ?? 0
+      const pending = this.#db.query<{ count: number }, Bindings>("SELECT COUNT(*) AS count FROM admission WHERE owner_session_id = $owner AND expires_at > $now")
+        .get({ $owner: ownerSessionID, $now: now })?.count ?? 0
+      if (active + pending >= max) return undefined
+      const id = crypto.randomUUID()
+      this.#db.query("INSERT INTO admission (id, owner_session_id, expires_at) VALUES ($id, $owner, $expires)").run({ $id: id, $owner: ownerSessionID, $expires: expiresAt })
+      return id
+    })()
+  }
+
+  releaseAdmission(id: string) { this.#db.query("DELETE FROM admission WHERE id = $id").run({ $id: id }) }
 
   reserve(ownerSessionID: string, sessionID: string, max: number, until: number) {
     return this.#db.transaction(() => {

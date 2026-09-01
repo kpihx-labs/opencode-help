@@ -49,16 +49,20 @@ export function opencodeHelp(overrides: Options = {}): Plugin {
       }, async execute(args, context) {
         if (registry.isManaged(context.sessionID)) throw new Error("Managed help peers cannot open peers; only their owning parent may do so")
         const model = parseModel(args.model)
-        const peer = await api.create(`Help: ${args.prompt.slice(0, 80)}`, context.abort)
-        if (peer.parentID) throw new Error("OpenCode returned a child session; refusing non-peer session")
-        const agent = args.agent ?? context.agent
-        registry.add({ ownerSessionID: context.sessionID, sessionID: peer.id, directory: context.directory, agent, model })
-        if (!registry.reserve(context.sessionID, peer.id, settings.maxConcurrent, Date.now() + lease)) { registry.archive(context.sessionID, peer.id); throw new Error(`Concurrent peer limit reached (${settings.maxConcurrent})`) }
-        const id = messageID()
-        try { await api.prompt({ sessionID: peer.id, text: args.prompt, agent, model, messageID: id }, context.abort) }
-        catch (error) { registry.archive(context.sessionID, peer.id); throw error }
-        registry.markActive([peer.id], input.directory, Date.now() + lease)
-        return json({ peerID: peer.id, state: "started", agent, model: model ?? "agent/default", messageID: id })
+        const admission = registry.admit(context.sessionID, settings.maxConcurrent, Date.now() + Math.max(60_000, lease))
+        if (!admission) throw new Error(`Concurrent peer limit reached (${settings.maxConcurrent})`)
+        try {
+          const peer = await api.create(`Help: ${args.prompt.slice(0, 80)}`, context.abort)
+          if (peer.parentID) throw new Error("OpenCode returned a child session; refusing non-peer session")
+          const agent = args.agent ?? context.agent
+          registry.add({ ownerSessionID: context.sessionID, sessionID: peer.id, directory: context.directory, agent, model })
+          if (!registry.reserve(context.sessionID, peer.id, settings.maxConcurrent, Date.now() + lease)) { registry.archive(context.sessionID, peer.id); throw new Error(`Concurrent peer limit reached (${settings.maxConcurrent})`) }
+          const id = messageID()
+          try { await api.prompt({ sessionID: peer.id, text: args.prompt, agent, model, messageID: id }, context.abort) }
+          catch (error) { registry.archive(context.sessionID, peer.id); throw error }
+          registry.markActive([peer.id], input.directory, Date.now() + lease)
+          return json({ peerID: peer.id, state: "started", agent, model: model ?? "agent/default", messageID: id })
+        } finally { registry.releaseAdmission(admission) }
       }}),
       help_list: tool({ description: "List help peers owned by this parent; archived peers are included only when requested.", args: { include_archived: tool.schema.boolean().optional() }, async execute(args, context) {
         const running = await active(context.abort)
