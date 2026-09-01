@@ -29,7 +29,7 @@ export class OpenCodeApi {
 
 function unwrap(result: unknown, operation: string, allowEmpty = false): unknown {
   if (!isRecord(result)) throw new Error(`OpenCode SDK returned invalid ${operation} result`)
-  if (result.error !== undefined) throw new Error(`${operation} failed: ${String(result.error)}`)
+  if (result.error !== undefined) throw new Error(`${operation} failed: ${errorMessage(result.error)}`)
   if (result.data !== undefined || allowEmpty) return result.data
   throw new Error(`${operation} returned no data`)
 }
@@ -38,3 +38,9 @@ function asSession(value: unknown): Session {
   return { id: value.id, ...(typeof value.parentID === "string" ? { parentID: value.parentID } : {}), title: value.title, directory: value.directory, time: { created: value.time.created, updated: value.time.updated } }
 }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value) }
+function errorMessage(value: unknown): string {
+  if (value instanceof Error) return value.message
+  if (typeof value === "string") return value
+  try { return JSON.stringify(value) }
+  catch { return String(value) }
+}

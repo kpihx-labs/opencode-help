@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2 — 2026-09-02
+
+- Preserve structured OpenCode SDK errors so invalid agent/model diagnostics remain actionable.
+
 ## 0.1.1 — 2026-09-02
 
 - Preserved the upstream op-thread MIT notice verbatim.

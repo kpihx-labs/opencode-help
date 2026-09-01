@@ -15,6 +15,18 @@ test("sends the selected model directly on promptAsync", async () => {
   expect(received).toMatchObject({ body: { agent: "build", model: { providerID: "openai", modelID: "gpt-5" }, parts: [{ type: "text", text: "review" }] } })
 })
 
+test("preserves structured OpenCode prompt errors", async () => {
+  const client = {
+    session: {
+      message: async () => ({ data: undefined }),
+      promptAsync: async () => ({ error: { status: 400, message: "Unknown model" } }),
+    },
+  }
+  const api = new OpenCodeApi(client as never, "/work")
+  await expect(api.prompt({ sessionID: "peer-1", text: "review", agent: "build", messageID: "message-1" }))
+    .rejects.toThrow('{"status":400,"message":"Unknown model"}')
+})
+
 test("rejects saturated help_open before creating another OpenCode session", async () => {
   let created = 0
   let resolveCreate: ((value: unknown) => void) | undefined
