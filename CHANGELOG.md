@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.1 — 2026-09-02
+
+- Exposed the live ordered JSONC model pool in `help_open` and `help_list` tool descriptions.
+- Made `help_list` return `defaultModel` and `permittedModels`; no duplicated catalog or hard-coded model IDs was introduced.
+
+## 0.4.0 — 2026-09-02
+
+- Replaced the single fixed model with a required ordered configuration allowlist.
+- The first configured model is the default; callers may explicitly choose only a listed model.
+- Made provider and quota failures transparent and explicitly parent-controlled: opening failures archive their peer and list alternatives; steer and durable-queue failures expose the error and instruct an explicit close/reopen cycle.
+
 ## 0.3.1 — 2026-09-02
 
 - Removed broken `delegableAgents()` call that used a non-existent SDK API (`client.agent.list`). OpenCode server validates the agent name at `promptAsync` time; the plugin no longer duplicates this.

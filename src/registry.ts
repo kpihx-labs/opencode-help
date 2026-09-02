@@ -171,6 +171,10 @@ export class HelpRegistry {
     const row = this.#db.query<{ state: string }, Bindings>("SELECT state FROM queue WHERE session_id = $session AND state IN ('pending', 'sending', 'failed') ORDER BY CASE WHEN state = 'failed' THEN 1 ELSE 0 END, created_at LIMIT 1").get({ $session: sessionID })
     return row ? (row.state === "failed" ? "queue_failed" : "queued") : undefined
   }
+  queueError(sessionID: string) {
+    const row = this.#db.query<{ last_error: string | null }, Bindings>("SELECT last_error FROM queue WHERE session_id = $session AND state = 'failed' ORDER BY created_at DESC LIMIT 1").get({ $session: sessionID })
+    return row?.last_error ?? undefined
+  }
   close() { this.#db.close() }
 }
 

@@ -11,7 +11,7 @@ opened, prompted, resumed, or closed unless its owning parent calls a tool.
 
 | Tool | Inputs | Result |
 | --- | --- | --- |
-| `help_open` | `prompt`, required `agent` | Admits capacity before creating and starting an owned root peer. |
+| `help_open` | `prompt`, required `agent`, optional permitted `model` | Admits capacity before creating and starting an owned root peer. |
 | `help_list` | optional `include_archived` | Lists only caller-owned peers. |
 | `help_read` | `peer_id`, optional `limit` | Returns an active owned peer's durable session/messages. |
 | `help_message` | `peer_id`, `message`, `delivery: steer\|queue` | Steers now or atomically queues later delivery. |
@@ -36,10 +36,23 @@ opened, prompted, resumed, or closed unless its owning parent calls a tool.
 
 ## Model handling
 
-`help_open` requires an explicit agent name. Its model is selected only by the plugin configuration; the caller cannot override it. The configured `provider/model-id` is split once into
-`{ providerID, modelID }` and sent as `body.model` on OpenCode SDK
-`session.promptAsync`. The agent name and model are stored with the peer and
-reused for every queued or steered prompt. Invalid configured values fail before prompting.
+`help_open` requires an explicit agent name. `models` is a required, non-empty,
+ordered configuration allowlist of `provider/model-id` values. A caller that
+omits `model` receives the first entry; a caller that supplies one may select
+only an entry from this list. The selected model is split once into
+`{ providerID, modelID }`, sent as `body.model` on OpenCode SDK
+`session.promptAsync`, and reused for every queued or steered prompt.
+
+The `help_open` and `help_list` tool descriptions expose this live ordered
+pool, including the default. `help_list` returns `defaultModel` and
+`permittedModels` alongside caller-owned peers. The JSONC configuration remains
+the only source of these values.
+
+There is no automatic fallback. An opening failure archives the new peer and
+reports all permitted alternatives so its parent can explicitly call
+`help_open` again. A steer failure leaves its peer active and instructs the
+parent to `help_close` then explicitly reopen. A terminal durable-queue failure
+is returned by `help_wait` with its final OpenCode error and permitted models.
 
 ## Non-goals
 

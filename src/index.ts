@@ -5,14 +5,16 @@ import { tool } from "@opencode-ai/plugin/tool"
 import { OpenCodeApi } from "./api.js"
 import { HelpRegistry, type ModelSelection } from "./registry.js"
 
-type Options = { databasePath?: string; maxConcurrent?: number; queueIntervalMs?: number; idleSettleMs?: number; defaultModel?: string }
-type Settings = { databasePath: string; maxConcurrent: number; queueIntervalMs: number; idleSettleMs: number; defaultModel: ModelSelection }
+type Options = { databasePath?: string; maxConcurrent?: number; queueIntervalMs?: number; idleSettleMs?: number; models?: string[] }
+type Settings = { databasePath: string; maxConcurrent: number; queueIntervalMs: number; idleSettleMs: number; models: ModelSelection[] }
 
 export function opencodeHelp(overrides: Options = {}): Plugin {
   return async (input, pluginOptions) => {
     const settings = resolve(overrides, pluginOptions ?? {})
     const registry = new HelpRegistry(settings.databasePath)
     const api = new OpenCodeApi(input.client, input.directory)
+    const permittedModels = modelNames(settings.models)
+    const modelPool = describeModelPool(permittedModels)
     const shutdown = new AbortController()
     const lease = Math.max(500, settings.queueIntervalMs * 4)
     let pump: Promise<void> | undefined
@@ -44,12 +46,12 @@ export function opencodeHelp(overrides: Options = {}): Plugin {
     const timer = setInterval(trigger, settings.queueIntervalMs)
     trigger()
     return { tool: {
-      help_open: tool({ description: "Create and start a durable root peer through an explicit OpenCode-delegable subagent. The model is controlled only by plugin configuration. Only a non-peer parent may open help peers.", args: {
-        prompt: tool.schema.string().min(1), agent: tool.schema.string().min(1),
+      help_open: tool({ description: `Create and start a durable root peer through an explicit OpenCode-delegable subagent. Only a non-peer parent may open help peers. ${modelPool}`, args: {
+        prompt: tool.schema.string().min(1), agent: tool.schema.string().min(1), model: tool.schema.string().min(3).optional().describe(`Optional provider/model-id from this ordered allowlist. Omit for the default (first): ${modelPool}`),
       }, async execute(args, context) {
         if (registry.isManaged(context.sessionID)) throw new Error("Managed help peers cannot open peers; only their owning parent may do so")
-          const model = settings.defaultModel
-          const agent = args.agent
+        const model = selectModel(args.model, settings.models)
+        const agent = args.agent
         const admission = registry.admit(context.sessionID, settings.maxConcurrent, Date.now() + Math.max(60_000, lease))
         if (!admission) throw new Error(`Concurrent peer limit reached (${settings.maxConcurrent})`)
         try {
@@ -59,14 +61,17 @@ export function opencodeHelp(overrides: Options = {}): Plugin {
           if (!registry.reserve(context.sessionID, peer.id, settings.maxConcurrent, Date.now() + lease)) { registry.archive(context.sessionID, peer.id); throw new Error(`Concurrent peer limit reached (${settings.maxConcurrent})`) }
           const id = messageID()
           try { await api.prompt({ sessionID: peer.id, text: args.prompt, agent, model, messageID: id }, context.abort) }
-          catch (error) { registry.archive(context.sessionID, peer.id); throw error }
+          catch (error) {
+            registry.archive(context.sessionID, peer.id)
+            throw reopenError("help_open", peer.id, model, settings.models, error, true)
+          }
           registry.markActive([peer.id], input.directory, Date.now() + lease)
-          return json({ peerID: peer.id, state: "started", agent, model: model ?? "agent/default", messageID: id })
+          return json({ peerID: peer.id, state: "started", agent, model: modelName(model), messageID: id })
         } finally { registry.releaseAdmission(admission) }
       }}),
-      help_list: tool({ description: "List help peers owned by this parent; archived peers are included only when requested.", args: { include_archived: tool.schema.boolean().optional() }, async execute(args, context) {
+      help_list: tool({ description: `List help peers owned by this parent and the configured model pool; archived peers are included only when requested. ${modelPool}`, args: { include_archived: tool.schema.boolean().optional() }, async execute(args, context) {
         const running = await active(context.abort)
-        return json({ peers: registry.list(context.sessionID, args.include_archived ?? false).map((peer) => ({ ...peer, state: peer.archived ? "archived" : running.has(peer.sessionID) ? "running" : registry.queueState(peer.sessionID) ?? "idle" })) })
+        return json({ defaultModel: permittedModels[0], permittedModels, peers: registry.list(context.sessionID, args.include_archived ?? false).map((peer) => ({ ...peer, state: peer.archived ? "archived" : running.has(peer.sessionID) ? "running" : registry.queueState(peer.sessionID) ?? "idle" })) })
       }}),
       help_read: tool({ description: "Read an owned active help peer's session and recent messages.", args: { peer_id: tool.schema.string().min(1), limit: tool.schema.number().int().min(1).max(50).optional() }, async execute(args, context) {
         owned(context.sessionID, args.peer_id); const [session, messages, running] = await Promise.all([api.get(args.peer_id, context.abort), api.messages(args.peer_id, args.limit ?? 20, context.abort), active(context.abort)])
@@ -74,14 +79,16 @@ export function opencodeHelp(overrides: Options = {}): Plugin {
       }}),
       help_message: tool({ description: "Send an owned peer a follow-up. steer sends immediately; queue atomically persists delivery until idle and capacity is available.", args: { peer_id: tool.schema.string().min(1), message: tool.schema.string().min(1), delivery: tool.schema.enum(["steer", "queue"]) }, async execute(args, context) {
         const peer = owned(context.sessionID, args.peer_id); const id = messageID()
-        if (args.delivery === "queue") { registry.enqueue({ id, ownerSessionID: context.sessionID, sessionID: peer.sessionID, text: args.message, agent: peer.agent, model: peer.model }); trigger(); return json({ peerID: peer.sessionID, messageID: id, state: "queued" }) }
+        if (args.delivery === "queue") { registry.enqueue({ id, ownerSessionID: context.sessionID, sessionID: peer.sessionID, text: args.message, agent: peer.agent, model: peer.model }); trigger(); return json({ peerID: peer.sessionID, messageID: id, state: "queued", model: modelName(peer.model) }) }
         if (!registry.reserve(context.sessionID, peer.sessionID, settings.maxConcurrent, Date.now() + lease)) throw new Error(`Concurrent peer limit reached (${settings.maxConcurrent})`)
-        await api.prompt({ sessionID: peer.sessionID, text: args.message, agent: peer.agent, model: peer.model, messageID: id }, context.abort); registry.markActive([peer.sessionID], input.directory, Date.now() + lease)
-        return json({ peerID: peer.sessionID, messageID: id, state: "sent" })
+        try { await api.prompt({ sessionID: peer.sessionID, text: args.message, agent: peer.agent, model: peer.model, messageID: id }, context.abort) }
+        catch (error) { throw reopenError("help_message", peer.sessionID, peer.model, settings.models, error, false) }
+        registry.markActive([peer.sessionID], input.directory, Date.now() + lease)
+        return json({ peerID: peer.sessionID, messageID: id, state: "sent", model: modelName(peer.model) })
       }}),
       help_wait: tool({ description: "Wait a bounded time for an owned peer to become idle. Never waits indefinitely.", args: { peer_id: tool.schema.string().min(1), timeout_seconds: tool.schema.number().int().min(1).max(600).optional() }, async execute(args, context) {
-        owned(context.sessionID, args.peer_id); const deadline = Date.now() + (args.timeout_seconds ?? 120) * 1000; let idleSince: number | undefined
-        while (Date.now() < deadline) { const running = await active(context.abort); const queue = registry.queueState(args.peer_id); if (queue === "queue_failed") return json({ peerID: args.peer_id, state: queue }); if (running.has(args.peer_id) || queue === "queued") idleSince = undefined; else idleSince ??= Date.now(); if (idleSince && Date.now() - idleSince >= settings.idleSettleMs) return json({ peerID: args.peer_id, state: "idle" }); await sleep(settings.queueIntervalMs, context.abort) }
+        const peer = owned(context.sessionID, args.peer_id); const deadline = Date.now() + (args.timeout_seconds ?? 120) * 1000; let idleSince: number | undefined
+        while (Date.now() < deadline) { const running = await active(context.abort); const queue = registry.queueState(args.peer_id); if (queue === "queue_failed") return json({ peerID: args.peer_id, state: queue, model: modelName(peer.model), error: registry.queueError(args.peer_id), permittedModels: modelNames(settings.models), nextAction: "Call help_close, then help_open with another permitted model." }); if (running.has(args.peer_id) || queue === "queued") idleSince = undefined; else idleSince ??= Date.now(); if (idleSince && Date.now() - idleSince >= settings.idleSettleMs) return json({ peerID: args.peer_id, state: "idle" }); await sleep(settings.queueIntervalMs, context.abort) }
         return json({ peerID: args.peer_id, state: "timed_out" })
       }}),
       help_close: tool({ description: "Archive and detach an owned help peer. This never deletes an OpenCode session or history.", args: { peer_id: tool.schema.string().min(1) }, async execute(args, context) {
@@ -96,19 +103,39 @@ export function opencodeHelp(overrides: Options = {}): Plugin {
 export default opencodeHelp()
 
 function resolve(overrides: Options, options: PluginOptions): Settings {
-  const defaultModel = parseModel(overrides.defaultModel ?? str(options.defaultModel) ?? "opencode-go/mimo-v2.5")
-  if (!defaultModel) throw new Error("defaultModel must be provider/model-id")
+  const models = parseModels(overrides.models ?? strArray(options.models))
   return {
     databasePath: overrides.databasePath ?? str(options.databasePath) ?? join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "opencode-help", "registry.sqlite"),
     maxConcurrent: overrides.maxConcurrent ?? int(options.maxConcurrent, 1, 32) ?? 8,
     queueIntervalMs: overrides.queueIntervalMs ?? int(options.queueIntervalMs, 50, 5_000) ?? 250,
     idleSettleMs: overrides.idleSettleMs ?? int(options.idleSettleMs, 50, 10_000) ?? 500,
-    defaultModel,
+    models,
   }
 }
 function parseModel(value?: string): ModelSelection | undefined { if (!value) return undefined; const slash = value.indexOf("/"); if (slash < 1 || slash === value.length - 1) throw new Error("model must be provider/model-id"); return { providerID: value.slice(0, slash), modelID: value.slice(slash + 1) } }
+function parseModels(values?: string[]): ModelSelection[] {
+  if (!values || values.length === 0) throw new Error("models must be a non-empty ordered list of provider/model-id values")
+  const parsed = values.map(parseModel)
+  if (parsed.some((model) => !model)) throw new Error("models must contain only provider/model-id values")
+  return parsed as ModelSelection[]
+}
+function selectModel(requested: string | undefined, permitted: ModelSelection[]) {
+  if (!requested) return permitted[0]
+  const model = parseModel(requested)
+  if (!model) throw new Error("model must be provider/model-id")
+  if (!permitted.some((candidate) => candidate.providerID === model.providerID && candidate.modelID === model.modelID)) throw new Error(`model ${requested} is not permitted; choose one of: ${modelNames(permitted).join(", ")}`)
+  return model
+}
+function modelName(model: ModelSelection | undefined) { return model ? `${model.providerID}/${model.modelID}` : "agent/default" }
+function modelNames(models: ModelSelection[]) { return models.map(modelName) }
+function describeModelPool(models: string[]) { return `Configured models (ordered; first is default): ${models.map((model, index) => `${index + 1}. ${model}${index === 0 ? " (default)" : ""}`).join("; ")}` }
+function reopenError(operation: "help_open" | "help_message", peerID: string, model: ModelSelection | undefined, permitted: ModelSelection[], error: unknown, archived: boolean) {
+  const state = archived ? "was archived" : "remains active"
+  return new Error(`${operation} failed with ${modelName(model)}; peer ${peerID} ${state}. Explicitly ${archived ? "call help_open again" : "call help_close, then help_open"} with another permitted model: ${modelNames(permitted).join(", ")}. OpenCode error: ${errorMessage(error)}`)
+}
 function int(value: unknown, min: number, max: number) { return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max ? value : undefined }
 function str(value: unknown) { return typeof value === "string" && value.length > 0 ? value : undefined }
+function strArray(value: unknown) { return Array.isArray(value) && value.every((entry) => typeof entry === "string") ? value : undefined }
 function messageID() { return `msg_${crypto.randomUUID()}` }
 function json(value: unknown) { return JSON.stringify(value, null, 2) }
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : String(error) }

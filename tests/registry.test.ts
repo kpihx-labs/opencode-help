@@ -40,4 +40,10 @@ describe("durable lifecycle registry", () => {
     const db = makeRegistry(); db.add(peer()); db.enqueue({ id: "message-1", ownerSessionID: "parent-a", sessionID: "peer-1", text: "continue", agent: "build" }); db.archive("parent-a", "peer-1")
     expect(db.pending("/work")).toHaveLength(0)
   })
+  test("exposes the final durable queue error", () => {
+    const db = makeRegistry(); db.add(peer()); db.enqueue({ id: "message-1", ownerSessionID: "parent-a", sessionID: "peer-1", text: "continue", agent: "build" })
+    for (let attempt = 1; attempt <= 8; attempt += 1) { expect(db.claim("message-1", 2, Date.now() - 1)).toBe(true); db.retry("message-1", attempt, "provider quota exhausted") }
+    expect(db.queueState("peer-1")).toBe("queue_failed")
+    expect(db.queueError("peer-1")).toBe("provider quota exhausted")
+  })
 })

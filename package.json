@@ -1,6 +1,6 @@
 {
   "name": "opencode-help",
-  "version": "0.3.1",
+  "version": "0.4.1",
   "description": "Durable, owner-scoped peer help sessions for OpenCode",
   "type": "module",
   "main": "dist/index.js",
