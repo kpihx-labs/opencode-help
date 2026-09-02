@@ -27,19 +27,15 @@ test("preserves structured OpenCode prompt errors", async () => {
     .rejects.toThrow('{"status":400,"message":"Unknown model"}')
 })
 
-test("lists live agents and configured provider models", async () => {
+test("lists only OpenCode-delegable agents", async () => {
   const client = {
-    agent: { list: async () => ({ data: [{ name: "general", description: "General peer", mode: "subagent" }] }) },
-    provider: { list: async () => ({ data: { all: [{ id: "opencode-go", models: { "mimo-v2.5": { name: "Mimo 2.5" } } }], connected: ["opencode-go"] } }) },
+    agent: { list: async () => ({ data: [{ name: "Live", mode: "primary" }, { name: "executor", mode: "subagent" }, { name: "general", mode: "all" }] }) },
   }
   const api = new OpenCodeApi(client as never, "/work")
-  await expect(api.catalog()).resolves.toEqual({
-    agents: [{ name: "general", description: "General peer", mode: "subagent" }],
-    providers: { all: [{ id: "opencode-go", models: { "mimo-v2.5": { name: "Mimo 2.5" } } }], connected: ["opencode-go"] },
-  })
+  await expect(api.delegableAgents()).resolves.toEqual(["executor", "general"])
 })
 
-test("applies configured defaults and exposes unavailable catalog entries", async () => {
+test("requires an explicit delegable agent and applies only the configured model", async () => {
   let prompt: unknown
   const client = {
     session: {
@@ -48,18 +44,30 @@ test("applies configured defaults and exposes unavailable catalog entries", asyn
       promptAsync: async (request: unknown) => { prompt = request; return { data: undefined } },
       status: async () => ({ data: {} }),
     },
-    agent: { list: async () => ({ data: [{ name: "general" }] }) },
-    provider: { list: async () => ({ data: { all: [{ id: "opencode-go", models: { "mimo-v2.5": { name: "Mimo 2.5" } } }], connected: [] } }) },
+    agent: { list: async () => ({ data: [{ name: "executor", mode: "subagent" }] }) },
   }
   const plugin = opencodeHelp({ databasePath: ":memory:", queueIntervalMs: 5_000 })
   const hooks = await plugin({ client, directory: "/work" } as never)
   const context = { sessionID: "parent-a", agent: "build", directory: "/work", abort: new AbortController().signal }
   const open = hooks.tool?.help_open
-  const catalog = hooks.tool?.help_catalog
-  if (!open || !catalog) throw new Error("help tools are unavailable")
-  await open.execute({ prompt: "review" }, context as never)
-  expect(prompt).toMatchObject({ body: { agent: "general", model: { providerID: "opencode-go", modelID: "mimo-v2.5" } } })
-  await expect(catalog.execute({}, context as never)).resolves.toContain('"reason": "provider_not_connected"')
+  if (!open) throw new Error("help_open is unavailable")
+  await open.execute({ prompt: "review", agent: "executor" }, context as never)
+  expect(prompt).toMatchObject({ body: { agent: "executor", model: { providerID: "opencode-go", modelID: "mimo-v2.5" } } })
+  await hooks.dispose?.()
+})
+
+test("rejects primary-only agents before creating a session", async () => {
+  let created = 0
+  const client = {
+    session: { create: async () => { created += 1; return { data: {} } }, message: async () => ({ data: undefined }), promptAsync: async () => ({ data: undefined }), status: async () => ({ data: {} }) },
+    agent: { list: async () => ({ data: [{ name: "Live", mode: "primary" }] }) },
+  }
+  const hooks = await opencodeHelp({ databasePath: ":memory:", queueIntervalMs: 5_000 })({ client, directory: "/work" } as never)
+  const open = hooks.tool?.help_open
+  if (!open) throw new Error("help_open is unavailable")
+  const context = { sessionID: "parent-a", agent: "Live", directory: "/work", abort: new AbortController().signal }
+  await expect(open.execute({ prompt: "review", agent: "Live" }, context as never)).rejects.toThrow("not an OpenCode-delegable subagent")
+  expect(created).toBe(0)
   await hooks.dispose?.()
 })
 
@@ -72,15 +80,15 @@ test("rejects saturated help_open before creating another OpenCode session", asy
       message: async () => ({ data: undefined }),
       promptAsync: async () => ({ data: undefined }),
       status: async () => ({ data: {} }),
-    },
+    }, agent: { list: async () => ({ data: [{ name: "executor", mode: "subagent" }] }) },
   }
   const plugin = opencodeHelp({ databasePath: ":memory:", maxConcurrent: 1, queueIntervalMs: 5_000 })
   const hooks = await plugin({ client, directory: "/work" } as never)
   const open = hooks.tool?.help_open
   if (!open) throw new Error("help_open is unavailable")
   const context = { sessionID: "parent-a", agent: "build", directory: "/work", abort: new AbortController().signal }
-  const first = open.execute({ prompt: "first" }, context as never)
-  await expect(open.execute({ prompt: "second" }, context as never)).rejects.toThrow("Concurrent peer limit reached (1)")
+  const first = open.execute({ prompt: "first", agent: "executor" }, context as never)
+  await expect(open.execute({ prompt: "second", agent: "executor" }, context as never)).rejects.toThrow("Concurrent peer limit reached (1)")
   expect(created).toBe(1)
   resolveCreate?.({ data: { id: "peer-1", title: "Help", directory: "/work", time: { created: 0, updated: 0 } } })
   await first

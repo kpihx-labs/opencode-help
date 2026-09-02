@@ -24,8 +24,7 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 | Tool | Purpose |
 | --- | --- |
-| `help_open` | Start an owned root peer with optional agent and model. |
-| `help_catalog` | Show live agents, configured models, effective defaults, and availability reasons. |
+| `help_open` | Start an owned root peer with a required OpenCode-delegable subagent. |
 | `help_list` | Inspect owned active peers; optionally include archived ones. |
 | `help_read` | Read a peer's OpenCode session/messages. |
 | `help_message` | Explicitly `steer` immediately or atomically `queue`. |
@@ -41,16 +40,14 @@ OpenCode SDK **v1.18.26** declares `SessionPromptAsyncData.body.model` as:
 { providerID: string; modelID: string }
 ```
 
-`help_open` accepts `model: "provider/model-id"`, validates/splits it, and
-passes that exact object to `client.session.promptAsync`. This is direct
-per-prompt selection, not an agent-profile fallback. The chosen agent and
-model are persisted and reused on `help_message`. If an installed OpenCode
-server rejects a configured provider/model, its normal SDK error is surfaced;
-the plugin does not claim an unavailable fallback.
+`help_open` requires an explicit agent. Before creating a peer, it asks
+OpenCode for the session's live agents and accepts only names declared with
+mode `subagent` or `all`—the same delegation surface exposed to the caller by
+OpenCode. It does not offer a separate catalog.
 
-Without overrides, `help_open` uses `general` with `opencode-go/mimo-v2.5`.
-Call `help_catalog` before opening a peer to inspect the live agent/model
-catalog and identify disconnected providers or missing defaults.
+The model is configuration-only: callers cannot pass one. The configured model
+is persisted and reused on `help_message`; an OpenCode rejection is surfaced
+verbatim.
 
 ## Install
 
@@ -72,7 +69,6 @@ OpenCode loads plugins at startup; restart OpenCode after configuration changes.
     "maxConcurrent": 8,
     "queueIntervalMs": 250,
     "idleSettleMs": 500,
-    "defaultAgent": "general",
     "defaultModel": "opencode-go/mimo-v2.5"
   }]]
 }
