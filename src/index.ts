@@ -109,7 +109,7 @@ function resolve(overrides: Options, options: PluginOptions): Settings {
 function parseModel(value?: string): ModelSelection | undefined { if (!value) return undefined; const slash = value.indexOf("/"); if (slash < 1 || slash === value.length - 1) throw new Error("model must be provider/model-id"); return { providerID: value.slice(0, slash), modelID: value.slice(slash + 1) } }
 function int(value: unknown, min: number, max: number) { return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max ? value : undefined }
 function str(value: unknown) { return typeof value === "string" && value.length > 0 ? value : undefined }
-function messageID() { return `help_${crypto.randomUUID()}` }
+function messageID() { return `msg_${crypto.randomUUID()}` }
 function json(value: unknown) { return JSON.stringify(value, null, 2) }
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : String(error) }
 function sleep(ms: number, signal: AbortSignal) { return new Promise<void>((resolve, reject) => { if (signal.aborted) return reject(signal.reason); const timeout = setTimeout(done, ms); signal.addEventListener("abort", abort, { once: true }); function done() { signal.removeEventListener("abort", abort); resolve() } function abort() { clearTimeout(timeout); reject(signal.reason) } }) }
