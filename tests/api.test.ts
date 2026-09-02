@@ -27,15 +27,7 @@ test("preserves structured OpenCode prompt errors", async () => {
     .rejects.toThrow('{"status":400,"message":"Unknown model"}')
 })
 
-test("lists only OpenCode-delegable agents", async () => {
-  const client = {
-    agent: { list: async () => ({ data: [{ name: "Live", mode: "primary" }, { name: "executor", mode: "subagent" }, { name: "general", mode: "all" }] }) },
-  }
-  const api = new OpenCodeApi(client as never, "/work")
-  await expect(api.delegableAgents()).resolves.toEqual(["executor", "general"])
-})
-
-test("requires an explicit delegable agent and applies only the configured model", async () => {
+test("applies only the configured model and requires explicit agent", async () => {
   let prompt: unknown
   const client = {
     session: {
@@ -44,7 +36,6 @@ test("requires an explicit delegable agent and applies only the configured model
       promptAsync: async (request: unknown) => { prompt = request; return { data: undefined } },
       status: async () => ({ data: {} }),
     },
-    agent: { list: async () => ({ data: [{ name: "executor", mode: "subagent" }] }) },
   }
   const plugin = opencodeHelp({ databasePath: ":memory:", queueIntervalMs: 5_000 })
   const hooks = await plugin({ client, directory: "/work" } as never)
@@ -53,21 +44,6 @@ test("requires an explicit delegable agent and applies only the configured model
   if (!open) throw new Error("help_open is unavailable")
   await open.execute({ prompt: "review", agent: "executor" }, context as never)
   expect(prompt).toMatchObject({ body: { agent: "executor", model: { providerID: "opencode-go", modelID: "mimo-v2.5" } } })
-  await hooks.dispose?.()
-})
-
-test("rejects primary-only agents before creating a session", async () => {
-  let created = 0
-  const client = {
-    session: { create: async () => { created += 1; return { data: {} } }, message: async () => ({ data: undefined }), promptAsync: async () => ({ data: undefined }), status: async () => ({ data: {} }) },
-    agent: { list: async () => ({ data: [{ name: "Live", mode: "primary" }] }) },
-  }
-  const hooks = await opencodeHelp({ databasePath: ":memory:", queueIntervalMs: 5_000 })({ client, directory: "/work" } as never)
-  const open = hooks.tool?.help_open
-  if (!open) throw new Error("help_open is unavailable")
-  const context = { sessionID: "parent-a", agent: "Live", directory: "/work", abort: new AbortController().signal }
-  await expect(open.execute({ prompt: "review", agent: "Live" }, context as never)).rejects.toThrow("not an OpenCode-delegable subagent")
-  expect(created).toBe(0)
   await hooks.dispose?.()
 })
 
@@ -80,7 +56,7 @@ test("rejects saturated help_open before creating another OpenCode session", asy
       message: async () => ({ data: undefined }),
       promptAsync: async () => ({ data: undefined }),
       status: async () => ({ data: {} }),
-    }, agent: { list: async () => ({ data: [{ name: "executor", mode: "subagent" }] }) },
+    },
   }
   const plugin = opencodeHelp({ databasePath: ":memory:", maxConcurrent: 1, queueIntervalMs: 5_000 })
   const hooks = await plugin({ client, directory: "/work" } as never)

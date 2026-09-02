@@ -26,7 +26,7 @@ opened, prompted, resumed, or closed unless its owning parent calls a tool.
 - Archived peers are invisible to active operations and queue dispatch; only
   their owner can resume them.
 - Managed peer sessions cannot call `help_open`, preventing recursion.
-- `help_open.agent` must appear in OpenCode's current agent list with mode `subagent` or `all`; primary-only and unknown agents are rejected.
+- `help_open.agent` is passed to OpenCode server-side `promptAsync`, which validates it; invalid agent names surface the server error verbatim.
 - Rejected `help_open` concurrency admissions fail before OpenCode session creation,
   so no unprompted or archived session is left behind.
 - The registry is WAL SQLite, and queue claims are transactions. Pending
@@ -36,7 +36,7 @@ opened, prompted, resumed, or closed unless its owning parent calls a tool.
 
 ## Model handling
 
-`help_open` requires an explicit OpenCode-delegable agent. Its model is selected only by the plugin configuration; the caller cannot override it. The configured `provider/model-id` is split once into
+`help_open` requires an explicit agent name. Its model is selected only by the plugin configuration; the caller cannot override it. The configured `provider/model-id` is split once into
 `{ providerID, modelID }` and sent as `body.model` on OpenCode SDK
 `session.promptAsync`. The agent name and model are stored with the peer and
 reused for every queued or steered prompt. Invalid configured values fail before prompting.

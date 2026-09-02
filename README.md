@@ -24,7 +24,7 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 | Tool | Purpose |
 | --- | --- |
-| `help_open` | Start an owned root peer with a required OpenCode-delegable subagent. |
+| `help_open` | Start an owned root peer with an explicit agent name and fixed model. |
 | `help_list` | Inspect owned active peers; optionally include archived ones. |
 | `help_read` | Read a peer's OpenCode session/messages. |
 | `help_message` | Explicitly `steer` immediately or atomically `queue`. |
@@ -40,14 +40,10 @@ OpenCode SDK **v1.18.26** declares `SessionPromptAsyncData.body.model` as:
 { providerID: string; modelID: string }
 ```
 
-`help_open` requires an explicit agent. Before creating a peer, it asks
-OpenCode for the session's live agents and accepts only names declared with
-mode `subagent` or `all`—the same delegation surface exposed to the caller by
-OpenCode. It does not offer a separate catalog.
-
-The model is configuration-only: callers cannot pass one. The configured model
-is persisted and reused on `help_message`; an OpenCode rejection is surfaced
-verbatim.
+`help_open` requires an explicit agent name. The name is passed directly to
+OpenCode's `promptAsync`, which validates it server-side. The model is
+configuration-only: callers cannot pass one. The configured model is persisted
+and reused on `help_message`; an OpenCode rejection is surfaced verbatim.
 
 ## Install
 

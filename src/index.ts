@@ -50,7 +50,6 @@ export function opencodeHelp(overrides: Options = {}): Plugin {
         if (registry.isManaged(context.sessionID)) throw new Error("Managed help peers cannot open peers; only their owning parent may do so")
           const model = settings.defaultModel
           const agent = args.agent
-          if (!(await api.delegableAgents(context.abort)).includes(agent)) throw new Error(`Agent '${agent}' is not an OpenCode-delegable subagent in this session`)
         const admission = registry.admit(context.sessionID, settings.maxConcurrent, Date.now() + Math.max(60_000, lease))
         if (!admission) throw new Error(`Concurrent peer limit reached (${settings.maxConcurrent})`)
         try {

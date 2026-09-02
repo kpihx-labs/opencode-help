@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1 — 2026-09-02
+
+- Removed broken `delegableAgents()` call that used a non-existent SDK API (`client.agent.list`). OpenCode server validates the agent name at `promptAsync` time; the plugin no longer duplicates this.
+
 ## 0.3.0 — 2026-09-02
 
 - Removed `help_catalog`, caller-selected models, and the guessed default agent.

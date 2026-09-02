@@ -20,15 +20,7 @@ export class OpenCodeApi {
     if (!isRecord(statuses)) throw new Error("OpenCode SDK returned invalid session statuses")
     return new Set(Object.entries(statuses).filter(([, status]) => isRecord(status) && status.type !== "idle").map(([id]) => id))
   }
-  async delegableAgents(signal?: AbortSignal) {
-    const client = this.client as unknown as { agent: { list(request: unknown): Promise<unknown> } }
-    const agents = unwrap(await client.agent.list({ query: { directory: this.directory }, signal }), "list agents")
-    if (!Array.isArray(agents)) throw new Error("OpenCode SDK returned invalid agent list")
-    return agents.flatMap((agent) => {
-      if (!isRecord(agent) || typeof agent.name !== "string") return []
-      return agent.mode === "subagent" || agent.mode === "all" ? [agent.name] : []
-    })
-  }
+
   async prompt(input: { sessionID: string; text: string; agent: string; model?: ModelSelection; messageID: string }, signal?: AbortSignal) {
     const existing = await this.client.session.message({ path: { id: input.sessionID, messageID: input.messageID }, query: { directory: this.directory }, signal })
     if (existing.data !== undefined) return
