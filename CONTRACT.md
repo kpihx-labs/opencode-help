@@ -12,6 +12,7 @@ opened, prompted, resumed, or closed unless its owning parent calls a tool.
 | Tool | Inputs | Result |
 | --- | --- | --- |
 | `help_open` | `prompt`, optional `agent`, optional `model` | Admits capacity before creating and starting an owned root peer. |
+| `help_catalog` | — | Lists available agents, configured models, effective defaults, and unavailable-provider reasons. |
 | `help_list` | optional `include_archived` | Lists only caller-owned peers. |
 | `help_read` | `peer_id`, optional `limit` | Returns an active owned peer's durable session/messages. |
 | `help_message` | `peer_id`, `message`, `delivery: steer\|queue` | Steers now or atomically queues later delivery. |
@@ -35,10 +36,15 @@ opened, prompted, resumed, or closed unless its owning parent calls a tool.
 
 ## Model handling
 
-`help_open.model` takes `provider/model-id`. It is split once into
+`help_open` defaults to `agent: "general"` and `model: "opencode-go/mimo-v2.5"`.
+Either may be overridden per peer. `help_open.model` takes `provider/model-id`. It is split once into
 `{ providerID, modelID }` and sent as `body.model` on OpenCode SDK
 `session.promptAsync`. The agent name and model are stored with the peer and
 reused for every queued or steered prompt. Invalid values fail before prompting.
+
+`help_catalog` is read-only. It calls the live OpenCode agent/provider APIs;
+it reports each configured model as unavailable when its provider is not
+connected, and reports defaults absent from the live catalog explicitly.
 
 ## Non-goals
 

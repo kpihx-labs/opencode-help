@@ -27,6 +27,42 @@ test("preserves structured OpenCode prompt errors", async () => {
     .rejects.toThrow('{"status":400,"message":"Unknown model"}')
 })
 
+test("lists live agents and configured provider models", async () => {
+  const client = {
+    agent: { list: async () => ({ data: [{ name: "general", description: "General peer", mode: "subagent" }] }) },
+    provider: { list: async () => ({ data: { all: [{ id: "opencode-go", models: { "mimo-v2.5": { name: "Mimo 2.5" } } }], connected: ["opencode-go"] } }) },
+  }
+  const api = new OpenCodeApi(client as never, "/work")
+  await expect(api.catalog()).resolves.toEqual({
+    agents: [{ name: "general", description: "General peer", mode: "subagent" }],
+    providers: { all: [{ id: "opencode-go", models: { "mimo-v2.5": { name: "Mimo 2.5" } } }], connected: ["opencode-go"] },
+  })
+})
+
+test("applies configured defaults and exposes unavailable catalog entries", async () => {
+  let prompt: unknown
+  const client = {
+    session: {
+      create: async () => ({ data: { id: "peer-1", title: "Help", directory: "/work", time: { created: 0, updated: 0 } } }),
+      message: async () => ({ data: undefined }),
+      promptAsync: async (request: unknown) => { prompt = request; return { data: undefined } },
+      status: async () => ({ data: {} }),
+    },
+    agent: { list: async () => ({ data: [{ name: "general" }] }) },
+    provider: { list: async () => ({ data: { all: [{ id: "opencode-go", models: { "mimo-v2.5": { name: "Mimo 2.5" } } }], connected: [] } }) },
+  }
+  const plugin = opencodeHelp({ databasePath: ":memory:", queueIntervalMs: 5_000 })
+  const hooks = await plugin({ client, directory: "/work" } as never)
+  const context = { sessionID: "parent-a", agent: "build", directory: "/work", abort: new AbortController().signal }
+  const open = hooks.tool?.help_open
+  const catalog = hooks.tool?.help_catalog
+  if (!open || !catalog) throw new Error("help tools are unavailable")
+  await open.execute({ prompt: "review" }, context as never)
+  expect(prompt).toMatchObject({ body: { agent: "general", model: { providerID: "opencode-go", modelID: "mimo-v2.5" } } })
+  await expect(catalog.execute({}, context as never)).resolves.toContain('"reason": "provider_not_connected"')
+  await hooks.dispose?.()
+})
+
 test("rejects saturated help_open before creating another OpenCode session", async () => {
   let created = 0
   let resolveCreate: ((value: unknown) => void) | undefined

@@ -25,6 +25,7 @@ See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 | Tool | Purpose |
 | --- | --- |
 | `help_open` | Start an owned root peer with optional agent and model. |
+| `help_catalog` | Show live agents, configured models, effective defaults, and availability reasons. |
 | `help_list` | Inspect owned active peers; optionally include archived ones. |
 | `help_read` | Read a peer's OpenCode session/messages. |
 | `help_message` | Explicitly `steer` immediately or atomically `queue`. |
@@ -47,6 +48,10 @@ model are persisted and reused on `help_message`. If an installed OpenCode
 server rejects a configured provider/model, its normal SDK error is surfaced;
 the plugin does not claim an unavailable fallback.
 
+Without overrides, `help_open` uses `general` with `opencode-go/mimo-v2.5`.
+Call `help_catalog` before opening a peer to inspect the live agent/model
+catalog and identify disconnected providers or missing defaults.
+
 ## Install
 
 Install from npm when published, or add the future plugin line to OpenCode
@@ -66,7 +71,9 @@ OpenCode loads plugins at startup; restart OpenCode after configuration changes.
   "plugin": [["opencode-help", {
     "maxConcurrent": 8,
     "queueIntervalMs": 250,
-    "idleSettleMs": 500
+    "idleSettleMs": 500,
+    "defaultAgent": "general",
+    "defaultModel": "opencode-go/mimo-v2.5"
   }]]
 }
 ```

@@ -5,8 +5,8 @@ import { tool } from "@opencode-ai/plugin/tool"
 import { OpenCodeApi } from "./api.js"
 import { HelpRegistry, type ModelSelection } from "./registry.js"
 
-type Options = { databasePath?: string; maxConcurrent?: number; queueIntervalMs?: number; idleSettleMs?: number }
-type Settings = Required<Options>
+type Options = { databasePath?: string; maxConcurrent?: number; queueIntervalMs?: number; idleSettleMs?: number; defaultAgent?: string; defaultModel?: string }
+type Settings = { databasePath: string; maxConcurrent: number; queueIntervalMs: number; idleSettleMs: number; defaultAgent: string; defaultModel: ModelSelection }
 
 export function opencodeHelp(overrides: Options = {}): Plugin {
   return async (input, pluginOptions) => {
@@ -48,13 +48,13 @@ export function opencodeHelp(overrides: Options = {}): Plugin {
         prompt: tool.schema.string().min(1), agent: tool.schema.string().min(1).optional(), model: tool.schema.string().min(3).optional().describe("Optional provider/model-id, sent directly as OpenCode promptAsync model."),
       }, async execute(args, context) {
         if (registry.isManaged(context.sessionID)) throw new Error("Managed help peers cannot open peers; only their owning parent may do so")
-        const model = parseModel(args.model)
+          const model = parseModel(args.model) ?? settings.defaultModel
         const admission = registry.admit(context.sessionID, settings.maxConcurrent, Date.now() + Math.max(60_000, lease))
         if (!admission) throw new Error(`Concurrent peer limit reached (${settings.maxConcurrent})`)
         try {
           const peer = await api.create(`Help: ${args.prompt.slice(0, 80)}`, context.abort)
           if (peer.parentID) throw new Error("OpenCode returned a child session; refusing non-peer session")
-          const agent = args.agent ?? context.agent
+          const agent = args.agent ?? settings.defaultAgent
           registry.add({ ownerSessionID: context.sessionID, sessionID: peer.id, directory: context.directory, agent, model })
           if (!registry.reserve(context.sessionID, peer.id, settings.maxConcurrent, Date.now() + lease)) { registry.archive(context.sessionID, peer.id); throw new Error(`Concurrent peer limit reached (${settings.maxConcurrent})`) }
           const id = messageID()
@@ -67,6 +67,10 @@ export function opencodeHelp(overrides: Options = {}): Plugin {
       help_list: tool({ description: "List help peers owned by this parent; archived peers are included only when requested.", args: { include_archived: tool.schema.boolean().optional() }, async execute(args, context) {
         const running = await active(context.abort)
         return json({ peers: registry.list(context.sessionID, args.include_archived ?? false).map((peer) => ({ ...peer, state: peer.archived ? "archived" : running.has(peer.sessionID) ? "running" : registry.queueState(peer.sessionID) ?? "idle" })) })
+      }}),
+      help_catalog: tool({ description: "List OpenCode agents and configured models, including effective help defaults and availability reasons. Read-only.", args: {}, async execute(_args, context) {
+        const catalog = await api.catalog(context.abort)
+        return json(normalizeCatalog(catalog, settings))
       }}),
       help_read: tool({ description: "Read an owned active help peer's session and recent messages.", args: { peer_id: tool.schema.string().min(1), limit: tool.schema.number().int().min(1).max(50).optional() }, async execute(args, context) {
         owned(context.sessionID, args.peer_id); const [session, messages, running] = await Promise.all([api.get(args.peer_id, context.abort), api.messages(args.peer_id, args.limit ?? 20, context.abort), active(context.abort)])
@@ -95,7 +99,18 @@ export function opencodeHelp(overrides: Options = {}): Plugin {
 }
 export default opencodeHelp()
 
-function resolve(overrides: Options, options: PluginOptions): Settings { return { databasePath: overrides.databasePath ?? str(options.databasePath) ?? join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "opencode-help", "registry.sqlite"), maxConcurrent: overrides.maxConcurrent ?? int(options.maxConcurrent, 1, 32) ?? 8, queueIntervalMs: overrides.queueIntervalMs ?? int(options.queueIntervalMs, 50, 5_000) ?? 250, idleSettleMs: overrides.idleSettleMs ?? int(options.idleSettleMs, 50, 10_000) ?? 500 } }
+function resolve(overrides: Options, options: PluginOptions): Settings {
+  const defaultModel = parseModel(overrides.defaultModel ?? str(options.defaultModel) ?? "opencode-go/mimo-v2.5")
+  if (!defaultModel) throw new Error("defaultModel must be provider/model-id")
+  return {
+    databasePath: overrides.databasePath ?? str(options.databasePath) ?? join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "opencode-help", "registry.sqlite"),
+    maxConcurrent: overrides.maxConcurrent ?? int(options.maxConcurrent, 1, 32) ?? 8,
+    queueIntervalMs: overrides.queueIntervalMs ?? int(options.queueIntervalMs, 50, 5_000) ?? 250,
+    idleSettleMs: overrides.idleSettleMs ?? int(options.idleSettleMs, 50, 10_000) ?? 500,
+    defaultAgent: overrides.defaultAgent ?? str(options.defaultAgent) ?? "general",
+    defaultModel,
+  }
+}
 function parseModel(value?: string): ModelSelection | undefined { if (!value) return undefined; const slash = value.indexOf("/"); if (slash < 1 || slash === value.length - 1) throw new Error("model must be provider/model-id"); return { providerID: value.slice(0, slash), modelID: value.slice(slash + 1) } }
 function int(value: unknown, min: number, max: number) { return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max ? value : undefined }
 function str(value: unknown) { return typeof value === "string" && value.length > 0 ? value : undefined }
@@ -103,3 +118,32 @@ function messageID() { return `help_${crypto.randomUUID()}` }
 function json(value: unknown) { return JSON.stringify(value, null, 2) }
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : String(error) }
 function sleep(ms: number, signal: AbortSignal) { return new Promise<void>((resolve, reject) => { if (signal.aborted) return reject(signal.reason); const timeout = setTimeout(done, ms); signal.addEventListener("abort", abort, { once: true }); function done() { signal.removeEventListener("abort", abort); resolve() } function abort() { clearTimeout(timeout); reject(signal.reason) } }) }
+function normalizeCatalog(raw: { agents: unknown; providers: unknown }, settings: Settings) {
+  const agents = values(raw.agents).map((agent) => ({ name: field(agent, "name") ?? field(agent, "id") ?? "unknown", description: field(agent, "description"), mode: field(agent, "mode") })).filter((agent) => agent.name !== "unknown")
+  const providerInfo = record(raw.providers)
+  const connected = new Set(values(providerInfo?.connected).filter((value): value is string => typeof value === "string"))
+  const providers = values(providerInfo?.all).map((provider) => {
+    const id = field(provider, "id") ?? field(provider, "name") ?? "unknown"
+    const models = modelEntries(record(record(provider)?.models)).map((model) => ({ ...model, providerID: id, availability: connected.has(id) ? "available" : "unavailable", ...(connected.has(id) ? {} : { reason: "provider_not_connected" }) }))
+    return { id, connected: connected.has(id), models }
+  }).filter((provider) => provider.id !== "unknown")
+  const models = providers.flatMap((provider) => provider.models)
+  const defaultModelID = `${settings.defaultModel.providerID}/${settings.defaultModel.modelID}`
+  const defaultModel = models.find((model) => `${model.providerID}/${model.id}` === defaultModelID)
+  const defaultAgent = agents.find((agent) => agent.name === settings.defaultAgent)
+  return {
+    defaults: {
+      agent: { name: settings.defaultAgent, availability: defaultAgent ? "available" : "unavailable", ...(defaultAgent ? {} : { reason: "agent_not_registered" }) },
+      model: defaultModel ?? { providerID: settings.defaultModel.providerID, id: settings.defaultModel.modelID, availability: "unavailable", reason: "model_not_exposed_by_server" },
+    },
+    agents,
+    models,
+  }
+}
+function modelEntries(models: Record<string, unknown> | undefined) {
+  if (!models) return []
+  return Object.entries(models).map(([key, value]) => ({ id: field(value, "id") ?? field(value, "name") ?? key, name: field(value, "name") ?? key }))
+}
+function values(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
+function record(value: unknown): Record<string, unknown> | undefined { return typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined }
+function field(value: unknown, key: string): string | undefined { const candidate = record(value)?.[key]; return typeof candidate === "string" ? candidate : undefined }

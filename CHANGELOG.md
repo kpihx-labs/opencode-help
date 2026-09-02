@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0 — 2026-09-02
+
+- Added explicit `general` / `opencode-go/mimo-v2.5` defaults, overridable per peer.
+- Added read-only `help_catalog` discovery of agents, configured models, effective defaults, and unavailable-provider reasons.
+
 ## 0.1.2 — 2026-09-02
 
 - Preserve structured OpenCode SDK errors so invalid agent/model diagnostics remain actionable.
